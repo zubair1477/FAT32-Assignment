@@ -29,6 +29,7 @@
 #include <errno.h>
 #include <string.h>
 #include <signal.h>
+#include <stdint.h> //needed to use uint
 
 #define MAX_NUM_ARGUMENTS 3
 
@@ -39,12 +40,25 @@
 
 #define MAX_COMMAND_SIZE 255    // The maximum command-line size
 
+//defining global variables
+FILE *fp = NULL;  //file pointer to the FAT32 image
+int is_open = 0;  // we set a flag to keep track of file currently being opened
+
+uint16_t BPB_BytesPerSec;
+uint8_t  BPB_SecPerClus;
+uint16_t BPB_RsvdSecCnt;
+uint8_t  BPB_NumFATs;
+uint32_t BPB_FATSz32;
+uint32_t BPB_RootClus;
+
 
 int main()
 {
 
+  //allocate memory for user input
   char * cmd_str = (char*) malloc( MAX_COMMAND_SIZE );
 
+  //start the shell loop
   while( 1 )
   {
     // Print out the mfs prompt
@@ -85,17 +99,98 @@ int main()
         token_count++;
     }
 
-    // Now print the tokenized input as a debug check
-    // \TODO Remove this code and replace with your FAT32 functionality
-
-    int token_index  = 0;
-    for( token_index = 0; token_index < token_count; token_index ++ ) 
+    //handle commands
+    if (token[0] == NULL) 
     {
-      printf("token[%d] = %s\n", token_index, token[token_index] );  
+      continue;
     }
 
-    free( working_root );
+    //open command
+    if (strcmp(token[0], "open") == 0) 
+    {
+      if (is_open) //stops new file from opening if one already open
+      {
+          printf("Error: File system image already open.\n");
+      } else if (token[1] == NULL) // if no filename is given, we stop 
+          printf("Error: No filename provided.\n");
+      } else 
+      {
+          fp = fopen(token[1], "rb"); //here we open the file in binary read mode
+          if (!fp) 
+          {
+              printf("Error: File system image not found.\n");
+          } else 
+          {
+              is_open = 1;  //if the open was successful, we set the flag
 
+              //here we are extracting the values from the BPB
+              fseek(fp, 11, SEEK_SET);
+              fread(&BPB_BytesPerSec, 2, 1, fp);
+              fread(&BPB_SecPerClus, 1, 1, fp);
+              fread(&BPB_RsvdSecCnt, 2, 1, fp);
+              fread(&BPB_NumFATs, 1, 1, fp);
+
+              fseek(fp, 36, SEEK_SET);
+              fread(&BPB_FATSz32, 4, 1, fp);
+
+              //this is the root cluster
+              fseek(fp, 44, SEEK_SET);
+              fread(&BPB_RootClus, 4, 1, fp);
+          }
+      }
   }
+
+  //close command
+  // we make sure the internal state is reset and that no other operations can be performed until a file is reopened
+  else if (strcmp(token[0], "close") == 0) 
+  {
+    if (!is_open) 
+    {
+        printf("Error: File system not open.\n");
+    } else 
+    {
+        fclose(fp);
+        fp = NULL;
+        is_open = 0;
+    }
+  } 
+
+  //info command
+  //we display the fields from BPB in base 10 and hexadecimal and confirm that the image was parsed correctly
+  else if (strcmp(token[0], "info") == 0) 
+  {
+    if (!is_open) 
+    {
+        printf("Error: File system image must be opened first.\n");
+    } else 
+    {
+        printf("BPB_BytesPerSec: %d (0x%X)\n", BPB_BytesPerSec, BPB_BytesPerSec);
+        printf("BPB_SecPerClus: %d (0x%X)\n", BPB_SecPerClus, BPB_SecPerClus);
+        printf("BPB_RsvdSecCnt: %d (0x%X)\n", BPB_RsvdSecCnt, BPB_RsvdSecCnt);
+        printf("BPB_NumFATs: %d (0x%X)\n", BPB_NumFATs, BPB_NumFATs);
+        printf("BPB_FATSz32: %u (0x%X)\n", BPB_FATSz32, BPB_FATSz32);
+    }
+  }
+
+  //handle false commands
+  else 
+  {
+    printf("Error: Unrecognized command.\n");
+  }
+
+  //making sure to free the allocated memory
+  for (int i = 0; i < MAX_NUM_ARGUMENTS; i++) 
+  {
+    if (token[i] != NULL) 
+    {
+        free(token[i]);
+    } 
+  }
+free(working_root);
+}
+
+free(cmd_str);
+
+  
   return 0;
 }
